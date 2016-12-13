@@ -1,10 +1,17 @@
 package ch.fhnw.tvver;
 
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import javax.sound.midi.InvalidMidiDataException;
 import javax.sound.midi.MidiEvent;
@@ -47,16 +54,19 @@ public class DataGen extends AbstractPCM2MIDI {
 
 	public class PCM2MIDI extends AbstractRenderCommand<IAudioRenderTarget> {
 		private final List<List<MidiEvent>> midiRef = new ArrayList<>();
+		private final List<List<MidiEvent>> midiRefOff = new ArrayList<>();
 		private       int                   msTime;
 
-		private HashSet<int> currentMidiRef = new HashSet<>();
+		private HashSet<Integer> currentMidiRef = new HashSet<>();
+		private HashSet<Integer> currentMidiRefOff = new HashSet<>();
 
-		private List<float> currentSamples = new List<float>();
+		private List<Float> currentSamples = new LinkedList<>();
 
 		private int lastWriteTime = 0;
-
+		private BufferedWriter buffer;
+		
 		public PCM2MIDI() {
-			super(P);
+			super();
 		}
 
 		@Override
@@ -78,6 +88,27 @@ public class DataGen extends AbstractPCM2MIDI {
 				}
 				evts.add(e);
 			}
+			
+			for(MidiEvent e : getRefMidi()) {
+				MidiMessage msg = e.getMessage();
+				if(msg instanceof ShortMessage &&
+						(msg.getMessage()[0] & 0xFF) != ShortMessage.NOTE_OFF ||
+						(msg.getMessage()[2] & 0xFF) == 0) continue;
+				int msTime = (int) (e.getTick() / 1000L);
+				while(midiRefOff.size() <= msTime)
+					midiRefOff.add(null);
+				List<MidiEvent> evts = midiRefOff.get(msTime);
+				if(evts == null) {
+					evts = new ArrayList<MidiEvent>();
+					midiRefOff.set(msTime, evts);
+				}
+				evts.add(e);
+			}
+			File file = new File("audiotest");
+			try {
+				buffer = Files.newBufferedWriter(Paths.get(file.getAbsolutePath()));
+			} catch (IOException e1) {
+			}
 		}
 
 		@Override
@@ -89,20 +120,47 @@ public class DataGen extends AbstractPCM2MIDI {
 						List<MidiEvent> evts = midiRef.get(msTime);
 						if(evts != null) {
 							for(MidiEvent e : evts){
-								currentMidiRef.add(e.getMessage().getMessage()[1]);  //Liste der aktuell aktiven Midi-Werte
+								currentMidiRef.add((int) e.getMessage().getMessage()[1]);  //Liste der aktuell aktiven Midi-Werte
 							}
 						}
-
-						currentSamples.add(target.getFrame().samples);
+						for(float f : target.getFrame().samples){  //stimmts?
+							currentSamples.add(f);
+						}
 					}
-
-					if(msTime - lastWriteTime > 50){
-						File.Write(String.join(",", currentSamples) + "---" + String.join(",", currentMidiRef) + "\n");  //Pseudocode!
-						currentSamples = new List<float>();
-						currentMidiRef = new HastSet<int>();
-
-						lastWriteTime = msTime;
+					if(msTime < midiRefOff.size()) {
+						List<MidiEvent> evts = midiRefOff.get(msTime);
+						if(evts != null) {
+							for(MidiEvent e : evts){
+								currentMidiRefOff.add((int) e.getMessage().getMessage()[1]);  //Liste der aktuell aktiven Midi-Werte
+							}
+						}
 					}
+					
+						//buffer.write("audiotest start");
+						//buffer.newLine();
+						if(msTime - lastWriteTime > 50){
+							lastWriteTime = msTime;
+							
+							
+							buffer.write(currentSamples.stream()
+									.map(f -> String.format("%f", f))
+									.collect(Collectors.joining(",")) 
+									+";" 
+									+ String.join(",", currentMidiRef.toString()));
+							buffer.newLine();
+						//File.Write(String.join(",", currentSamples) + "---" + String.join(",", currentMidiRef) + "\n");  //Pseudocode!
+							currentSamples = new LinkedList<Float>();
+							//currentMidiRef = new HashSet<Integer>();
+							for(Integer r : currentMidiRefOff){
+								currentMidiRef.remove(r);
+							}
+							
+							currentMidiRefOff = new HashSet<>();
+							
+							
+							buffer.flush();
+							//buffer.close();
+						}
 				}
 			} catch(Throwable t) {
 				throw new RenderCommandException(t);
