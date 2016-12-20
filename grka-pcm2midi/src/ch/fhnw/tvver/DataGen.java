@@ -92,8 +92,8 @@ public class DataGen extends AbstractPCM2MIDI {
 			for(MidiEvent e : getRefMidi()) {
 				MidiMessage msg = e.getMessage();
 				if(msg instanceof ShortMessage &&
-						(msg.getMessage()[0] & 0xFF) != ShortMessage.NOTE_OFF ||
-						(msg.getMessage()[2] & 0xFF) == 0) continue;
+						(msg.getMessage()[0] & 0xFF) != ShortMessage.NOTE_OFF &&
+						((msg.getMessage()[0] & 0xFF) != ShortMessage.NOTE_ON || (msg.getMessage()[2] & 0xFF) != 0)) continue;
 				int msTime = (int) (e.getTick() / 1000L);
 				while(midiRefOff.size() <= msTime)
 					midiRefOff.add(null);
