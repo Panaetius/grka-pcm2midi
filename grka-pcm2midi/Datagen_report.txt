@@ -1,2 +1,0 @@
-File	Track length	# of reference notes	# of true detected notes	# of false detected notes	Min. Latency	Max. Latency	Avg. Latency	Grade
-chpn-p1_format0.mid	0.0	323	0	0	100	100	0	1.0	
