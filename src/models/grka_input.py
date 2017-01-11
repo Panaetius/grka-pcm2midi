@@ -79,7 +79,15 @@ def read_grka(filename_queue, data_dir):
         })
 
     result.label = features['label']
-    result.uint8image = tf.reshape(features['data'], [IMAGE_SIZE, 1])
+    fft1 = tf.fft(tf.complex(features['data'], 0.0))
+    fft2 = tf.fft(tf.complex(tf.reshape(features['data'], [3, 735]),
+                             0.0))
+    fft3 = tf.fft(tf.complex(tf.reshape(features['data'], [5,441]),
+                            0.0))
+    out1 = tf.concat(0, [tf.complex_abs(fft1), atan2(fft1)])
+    out2 = tf.reshape(tf.concat(1, [tf.complex_abs(fft2), atan2(fft2)]), [-1])
+    out3 = tf.reshape(tf.concat(1, [tf.complex_abs(fft3), atan2(fft3)]), [-1])
+    result.uint8image = tf.concat(0, [out1, out2, out3])
 
     return result
 
@@ -119,7 +127,10 @@ def _generate_image_and_label_batch(image, label, min_queue_examples,
 
     # Display the training images in the visualizer.
     tf.summary.audio('audio', images, 44100)
-    tf.summary.image('images', tf.expand_dims(images, 1), max_outputs=16)
+    tf.summary.image('images', tf.expand_dims(tf.reshape(images, [batch_size,
+                                                                  13230,
+                                                                  1]), 1),
+                     max_outputs=16)
 
     return images, tf.reshape(label_batch, [batch_size, NUM_CLASSES])
 
@@ -230,3 +241,22 @@ def inputs(eval_data, data_dir, batch_size):
     return _generate_image_and_label_batch(reshaped_image, read_input.label,
                                            min_queue_examples, batch_size,
                                            shuffle=False)
+
+def atan2(c):
+    x = tf.real(c)
+    y = tf.imag(c)
+    angle = tf.select(tf.greater(x, 0.0), tf.atan(y / x), tf.zeros_like(x))
+    angle = tf.select(tf.greater(y, 0.0), 0.5 * np.pi - tf.atan(x / y), angle)
+    angle = tf.select(tf.less(y, 0.0), -0.5 * np.pi - tf.atan(x / y), angle)
+    angle = tf.select(tf.less(x, 0.0), tf.atan(y / x) + np.pi, angle)
+    angle = tf.select(tf.logical_and(tf.equal(x, 0.0), tf.equal(y, 0.0)),
+                      np.nan * tf.zeros_like(x), angle)
+
+    indices = tf.where(tf.less(angle, 0.0))
+    updated_values = tf.gather_nd(angle, indices) + (2 * np.pi)
+    update = tf.SparseTensor(indices, updated_values, angle.get_shape())
+    update_dense = tf.sparse_tensor_to_dense(update)
+
+    result = angle + update_dense
+
+    return tf.select(tf.is_nan(result), tf.zeros_like(result), result)

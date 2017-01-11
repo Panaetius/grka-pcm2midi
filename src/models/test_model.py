@@ -57,7 +57,7 @@ def eval_once(saver, summary_writer, logits, labels, num_classes, summary_op):
       summary_op: Summary op.
     """
     config = tf.ConfigProto(
-        device_count={'GPU': 0}
+        # device_count={'GPU': 0}
     )
     with tf.Session(config=config) as sess:
         ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_dir)
@@ -95,13 +95,12 @@ def eval_once(saver, summary_writer, logits, labels, num_classes, summary_op):
 
             while step < num_iter and not coord.should_stop():
                 predictions, actual = sess.run([logits, labels])
-                adj_predictions = np.round(1 / (1 + np.exp(
-                    predictions)))
+                adj_predictions = np.round(1 / (1 + np.exp(-predictions)))
                 true_positives += np.sum(np.bitwise_and(np.equal(adj_predictions,
                                                          actual)
-                                        .astype(int), actual), axis=1)
-                positives += np.sum(adj_predictions.astype(int), axis=1)
-                actual_positives += np.sum(actual, axis=1)
+                                        .astype(int), actual), axis=0)
+                positives += np.sum(adj_predictions.astype(int), axis=0)
+                actual_positives += np.sum(actual, axis=0)
 
                 step += 1
 

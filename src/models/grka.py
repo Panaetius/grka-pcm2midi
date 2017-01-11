@@ -43,8 +43,8 @@ NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = grka_input.NUM_EXAMPLES_PER_EPOCH_FOR_EVAL
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999  # The decay to use for the moving average.
 NUM_EPOCHS_PER_DECAY = 40  # Epochs after which learning rate decays.
-LEARNING_RATE_DECAY_FACTOR = 0.25  # Learning rate decay factor.
-INITIAL_LEARNING_RATE = 0.00007  # Initial learning rate. 0.00007
+LEARNING_RATE_DECAY_FACTOR = 0.5  # Learning rate decay factor.
+INITIAL_LEARNING_RATE = 0.00015  # Initial learning rate. 0.00007
 WEIGHT_DECAY = 0.0015
 ADAM_EPSILON = 0.0001
 
@@ -123,7 +123,7 @@ def distorted_inputs():
         raise ValueError('Please supply a data_dir')
     data_dir = FLAGS.data_dir
     images, labels = grka_input.distorted_inputs(data_dir=data_dir,
-                                                   batch_size=FLAGS.batch_size)
+                                                 batch_size=FLAGS.batch_size)
     if FLAGS.use_fp16:
         images = tf.cast(images, tf.float16)
         labels = tf.cast(labels, tf.float16)
@@ -144,8 +144,8 @@ def inputs(eval_data):
         raise ValueError('Please supply a data_dir')
     data_dir = FLAGS.data_dir
     images, labels = grka_input.inputs(eval_data=eval_data,
-                                         data_dir=data_dir,
-                                         batch_size=FLAGS.batch_size)
+                                       data_dir=data_dir,
+                                       batch_size=FLAGS.batch_size)
     if FLAGS.use_fp16:
         images = tf.cast(images, tf.float16)
         labels = tf.cast(labels, tf.float16)
@@ -165,229 +165,38 @@ def inference(images):
     # If we only ran this model on a single GPU, we could simplify this function
     # by replacing all instances of tf.get_variable() with tf.Variable().
 
-    with tf.variable_scope('conv1') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[11, 1, 64],
-                                             connections=11 * 1 + 64,
-                                             wd=WEIGHT_DECAY*50)
-        conv = tf.nn.conv1d(images, kernel, 1, padding='SAME')
-        biases = _variable_on_cpu('biases', [64], tf.constant_initializer(0.0))
-        bias = tf.nn.bias_add(conv, biases)
-        conv1 = tf.nn.elu(bias, name=scope.name)
-        _activation_summary(conv1)
-        grid = put_kernels_on_grid(kernel, (8, 8))
-        tf.summary.image('conv1/features', grid, max_outputs=1)
-        grid = put_activations_on_grid(conv, (8, 8))
-        tf.summary.image('conv1/activations', grid, max_outputs=1)
+    with tf.variable_scope('local1') as scope:
+        dim = images.get_shape()[1].value
+        #images = tf.Print(images, [images], 'images:', summarize=564480)
+        weights = _variable_with_weight_decay('weights', shape=[dim, 13230],
+                                              connections=dim + 13230,
+                                              wd=WEIGHT_DECAY)
+        biases = _variable_on_cpu('biases', [13230],
+                                  tf.constant_initializer(0.0))
+        local1 = tf.nn.elu(tf.matmul(images, weights) + biases,
+                           name=scope.name)
+        local1 = tf.nn.dropout(local1, FLAGS.dropout_keep_probability)
+        _activation_summary(local1)
 
-        mean, variance = tf.nn.moments(conv, [0, 1, 2])
-        beta = tf.Variable(tf.constant(0.0, shape=[64]),
-                           name='beta', trainable=True)
-        gamma = tf.Variable(tf.constant(1.0, shape=[64]),
-                            name='gamma', trainable=True)
-        tf.summary.audio('conv1/audio', tf.nn.batch_normalization(conv, mean,
-         variance,beta,gamma,1e-3),44100)
-
-    with tf.variable_scope('conv2') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[3, 64, 64],
-                                             connections=3 *  64 + 64,
-                                             wd=WEIGHT_DECAY)
-        conv = tf.nn.conv1d(conv1, kernel, 1, padding='SAME')
-        biases = _variable_on_cpu('biases', [64], tf.constant_initializer(0.0))
-        bias = tf.nn.bias_add(conv, biases)
-        conv2 = tf.nn.elu(bias, name=scope.name)
-        _activation_summary(conv2)
-        grid = put_activations_on_grid(conv, (8, 8))
-        tf.summary.image('conv2/activations', grid, max_outputs=1)
-
-    pool2 = tf.nn.max_pool(tf.expand_dims(conv2, 2), ksize=[1, 2, 1,
-                                                                     1],
-                           strides=[1, 2, 1, 1], padding='SAME', name='pool3')
-    squeeze2 = tf.squeeze(pool2)
-    # norm2 = tf.nn.lrn(pool2, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
-    #                   name='norm2')
-
-    with tf.variable_scope('conv3') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[3, 64, 128],
-                                             connections=3 * 64 + 128,
-                                             wd=WEIGHT_DECAY)
-        conv = tf.nn.conv1d(squeeze2, kernel, 1, padding='SAME')
-        biases = _variable_on_cpu('biases', [128], tf.constant_initializer(0.0))
-        bias = tf.nn.bias_add(conv, biases)
-        conv3 = tf.nn.elu(bias, name=scope.name)
-        _activation_summary(conv3)
-        grid = put_activations_on_grid(conv, (8, 16))
-        tf.summary.image('conv3/activations', grid, max_outputs=1)
-
-    with tf.variable_scope('conv4') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[3, 128, 128],
-                                             connections=3 * 128 + 128,
-                                             wd=WEIGHT_DECAY)
-        conv = tf.nn.conv1d(conv3, kernel, 1, padding='SAME')
-        biases = _variable_on_cpu('biases', [128], tf.constant_initializer(0.0))
-        bias = tf.nn.bias_add(conv, biases)
-        conv4 = tf.nn.elu(bias, name=scope.name)
-        _activation_summary(conv4)
-        grid = put_activations_on_grid(conv, (8, 16))
-        tf.summary.image('conv4/activations', grid, max_outputs=1)
-
-    pool4 = tf.nn.max_pool(tf.expand_dims(conv4, 2), ksize=[1, 2, 1,
-                                                                     1],
-                           strides=[1, 2, 1, 1], padding='SAME', name='pool5')
-    squeeze4 = tf.squeeze(pool4)
-    # norm4 = tf.nn.lrn(pool4, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
-    #                   name='norm4')
-
-    with tf.variable_scope('conv5') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[3, 128, 256],
-                                             connections=3 * 128 + 256,
-                                             wd=WEIGHT_DECAY)
-        conv = tf.nn.conv1d(squeeze4, kernel, 1, padding='SAME')
-        biases = _variable_on_cpu('biases', [256], tf.constant_initializer(0.0))
-        bias = tf.nn.bias_add(conv, biases)
-        conv5 = tf.nn.elu(bias, name=scope.name)
-        _activation_summary(conv5)
-        grid = put_activations_on_grid(conv, (16, 16))
-        tf.summary.image('conv5/activations', grid, max_outputs=1)
-
-    with tf.variable_scope('conv6') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[3, 256, 256],
-                                             connections=3 * 256 + 256,
-                                             wd=WEIGHT_DECAY)
-        conv = tf.nn.conv1d(conv5, kernel, 1, padding='SAME')
-        biases = _variable_on_cpu('biases', [256], tf.constant_initializer(0.0))
-        bias = tf.nn.bias_add(conv, biases)
-        conv6 = tf.nn.elu(bias, name=scope.name)
-        _activation_summary(conv6)
-        grid = put_activations_on_grid(conv, (16, 16))
-        tf.summary.image('conv6/activations', grid, max_outputs=1)
-
-    with tf.variable_scope('conv7') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[3, 256, 256],
-                                             connections=3 * 256 + 256,
-                                             wd=WEIGHT_DECAY)
-        conv = tf.nn.conv1d(conv6, kernel, 1, padding='SAME')
-        biases = _variable_on_cpu('biases', [256], tf.constant_initializer(0.0))
-        bias = tf.nn.bias_add(conv, biases)
-        conv7 = tf.nn.elu(bias, name=scope.name)
-        _activation_summary(conv7)
-        grid = put_activations_on_grid(conv, (16, 16))
-        tf.summary.image('conv7/activations', grid, max_outputs=1)
-
-    pool7 = tf.nn.max_pool(tf.expand_dims(conv7, 2), ksize=[1, 2, 1,
-                                                                     1],
-                           strides=[1, 2, 1, 1], padding='SAME', name='pool5')
-    squeeze7 = tf.squeeze(pool7)
-    # norm7 = tf.nn.lrn(pool7, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
-    #                   name='norm7')
-
-    with tf.variable_scope('conv8') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[3, 256, 512],
-                                             connections=3 * 256 + 512,
-                                             wd=WEIGHT_DECAY)
-        conv = tf.nn.conv1d(squeeze7, kernel, 1, padding='SAME')
-        biases = _variable_on_cpu('biases', [512], tf.constant_initializer(0.0))
-        bias = tf.nn.bias_add(conv, biases)
-        conv8 = tf.nn.elu(bias, name=scope.name)
-        _activation_summary(conv8)
-        grid = put_activations_on_grid(conv, (16, 32))
-        tf.summary.image('conv8/activations', grid, max_outputs=1)
-
-    with tf.variable_scope('conv9') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[3, 512, 512],
-                                             connections=3 * 512 + 512,
-                                             wd=WEIGHT_DECAY)
-        conv = tf.nn.conv1d(conv8, kernel, 1, padding='SAME')
-        biases = _variable_on_cpu('biases', [512], tf.constant_initializer(0.0))
-        bias = tf.nn.bias_add(conv, biases)
-        conv9 = tf.nn.elu(bias, name=scope.name)
-        _activation_summary(conv9)
-        grid = put_activations_on_grid(conv, (16, 32))
-        tf.summary.image('conv9/activations', grid, max_outputs=1)
-
-    with tf.variable_scope('conv10') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[3, 512, 512],
-                                             connections=3 * 512 + 512,
-                                             wd=WEIGHT_DECAY)
-        conv = tf.nn.conv1d(conv9, kernel, 1, padding='SAME')
-        biases = _variable_on_cpu('biases', [512], tf.constant_initializer(0.0))
-        bias = tf.nn.bias_add(conv, biases)
-        conv10 = tf.nn.elu(bias, name=scope.name)
-        _activation_summary(conv10)
-        grid = put_activations_on_grid(conv, (16, 32))
-        tf.summary.image('conv10/activations', grid, max_outputs=1)
-
-    pool10 = tf.nn.max_pool(tf.expand_dims(conv10, 2), ksize=[1,
-                                                                         2, 1,
-                                                                     1],
-                           strides=[1, 2, 1, 1], padding='SAME', name='pool5')
-    squeeze10 = tf.squeeze(pool10)
-    # norm10 = tf.nn.lrn(pool10, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
-    #                   name='norm10')
-
-    with tf.variable_scope('conv11') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[3, 512, 512],
-                                             connections=3 * 512 + 512,
-                                             wd=WEIGHT_DECAY)
-        conv = tf.nn.conv1d(squeeze10, kernel, 1, padding='SAME')
-        biases = _variable_on_cpu('biases', [512], tf.constant_initializer(0.0))
-        bias = tf.nn.bias_add(conv, biases)
-        conv11 = tf.nn.elu(bias, name=scope.name)
-        _activation_summary(conv11)
-        grid = put_activations_on_grid(conv, (16, 32))
-        tf.summary.image('conv11/activations', grid, max_outputs=1)
-
-    with tf.variable_scope('conv12') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[3, 512, 512],
-                                             connections=3 * 512 + 512,
-                                             wd=WEIGHT_DECAY)
-        conv = tf.nn.conv1d(conv11, kernel, 1, padding='SAME')
-        biases = _variable_on_cpu('biases', [512], tf.constant_initializer(0.0))
-        bias = tf.nn.bias_add(conv, biases)
-        conv12 = tf.nn.elu(bias, name=scope.name)
-        _activation_summary(conv12)
-        grid = put_activations_on_grid(conv, (16, 32))
-        tf.summary.image('conv12/activations', grid, max_outputs=1)
-
-    with tf.variable_scope('conv13') as scope:
-        kernel = _variable_with_weight_decay('weights',
-                                             shape=[3, 512, 512],
-                                             connections=3 * 512 + 512,
-                                             wd=WEIGHT_DECAY)
-        conv = tf.nn.conv1d(conv12, kernel, 1, padding='SAME')
-        biases = _variable_on_cpu('biases', [512], tf.constant_initializer(0.0))
-        bias = tf.nn.bias_add(conv, biases)
-        conv13 = tf.nn.elu(bias, name=scope.name)
-        _activation_summary(conv13)
-        grid = put_activations_on_grid(conv, (16, 32))
-        tf.summary.image('conv13/activations', grid, max_outputs=1)
-
-    pool13 = tf.nn.max_pool(tf.expand_dims(conv13, 2), ksize=[1,
-                                                                         2, 1,
-                                                                     1],
-                           strides=[1, 2, 1, 1], padding='SAME', name='pool5')
-    squeeze13 = tf.squeeze(pool13)
-    # norm13 = tf.nn.lrn(pool13, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
-    #                   name='norm13')
+    with tf.variable_scope('local2') as scope:
+        dim = images.get_shape()[1].value
+        weights = _variable_with_weight_decay('weights', shape=[13230, 8820],
+                                              connections=13230 + 8820,
+                                              wd=WEIGHT_DECAY)
+        biases = _variable_on_cpu('biases', [8820],
+                                  tf.constant_initializer(0.0))
+        local2 = tf.nn.elu(tf.matmul(local1, weights) + biases,
+                           name=scope.name)
+        local2 = tf.nn.dropout(local2, FLAGS.dropout_keep_probability)
+        _activation_summary(local2)
 
     # local3
     with tf.variable_scope('local3') as scope:
         # Move everything into depth so we can perform a single matrix multiply.
-        reshape = tf.reshape(squeeze13, [FLAGS.batch_size, -1])
+        reshape = tf.reshape(local2, [FLAGS.batch_size, -1])
         dim = reshape.get_shape()[1].value
-        weights = _variable_with_weight_decay('weights', shape=[dim, 4096],
-                                              connections=3 * 512 + 4096,
+        weights = _variable_with_weight_decay('weights', shape=[8820, 4096],
+                                              connections=8820 + 4096,
                                               wd=WEIGHT_DECAY)
         biases = _variable_on_cpu('biases', [4096],
                                   tf.constant_initializer(0.0))
@@ -407,24 +216,14 @@ def inference(images):
         local4 = tf.nn.dropout(local4, FLAGS.dropout_keep_probability)
         _activation_summary(local4)
 
-        # local5
-    with tf.variable_scope('local5') as scope:
-        weights = _variable_with_weight_decay('weights', shape=[4096, 100],
-                                              connections=4096 + 100,
-                                              wd=WEIGHT_DECAY)
-        biases = _variable_on_cpu('biases', [100], tf.constant_initializer(0.0))
-        local5 = tf.nn.elu(tf.matmul(local4, weights) + biases, name=scope.name)
-        local5 = tf.nn.dropout(local5, FLAGS.dropout_keep_probability)
-        _activation_summary(local5)
-
     # softmax, i.e. softmax(WX + b)
     with tf.variable_scope('softmax_linear') as scope:
-        weights = _variable_with_weight_decay('weights', [100, NUM_CLASSES],
-                                              connections=100 + NUM_CLASSES,
+        weights = _variable_with_weight_decay('weights', [4096, NUM_CLASSES],
+                                              connections=4096 + NUM_CLASSES,
                                               wd=0.0)
         biases = _variable_on_cpu('biases', [NUM_CLASSES],
                                   tf.constant_initializer(0.0))
-        softmax_linear = tf.add(tf.matmul(local5, weights), biases,
+        softmax_linear = tf.add(tf.matmul(local4, weights), biases,
                                 name=scope.name)
         _activation_summary(softmax_linear)
 
@@ -442,7 +241,8 @@ def loss(logits, labels):
       Loss tensor of type float.
     """
     # Calculate the average cross entropy loss across the batch.
-    sigmoid_logits = tf.round(tf.nn.sigmoid(logits))
+    sig_logits = tf.nn.sigmoid(logits)
+    sigmoid_logits = tf.round(sig_logits)
     # sigmoid_logits = tf.Print(sigmoid_logits, [sigmoid_logits],
     #                           message="sigmoid_logits: ", summarize=128)
     # labels = tf.Print(labels, [labels], message="labels: ", summarize=128)
@@ -471,19 +271,23 @@ def loss(logits, labels):
     #                  tf.reshape(tf.clip_by_norm(conf_matrix, 1, axes=[0]),
     #                             [1, NUM_CLASSES, NUM_CLASSES, 1]))
 
-    #cross_entropy = tf.nn.sigmoid_cross_entropy_with_logits(
+    # cross_entropy = tf.nn.sigmoid_cross_entropy_with_logits(
     #    logits, labels, name='cross_entropy_per_example')
-    #cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
+    cross_entropy = tf.nn.weighted_cross_entropy_with_logits(
+        logits, labels, 42.0, name='cross_entropy_per_example')
+    cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
+
     count = tf.tile(
-        tf.reshape(256 / tf.clip_by_value(tf.reduce_sum(labels,1), 1, 128),
-                   [FLAGS.batch_size,1]),
+        tf.reshape((128.0 / tf.clip_by_value(tf.reduce_sum(labels, 1), 1,
+                                             128) - 1.0),
+                   [FLAGS.batch_size, 1]),
         tf.pack([1, 128]))
-    weight = tf.add(tf.mul(labels, count),1)
-    #weight = tf.Print(weight,[weight],"Weights:",
+    weight = tf.add(tf.mul(labels, count), 1)
+    # weight = tf.Print(weight,[weight],"Weights:",
     # summarize=128*FLAGS.batch_size)
 
-    cross_entropy_mean = tf.contrib.losses.log_loss(tf.nn.sigmoid(logits),
-                                                    labels, weight=weight)
+    # cross_entropy_mean = tf.contrib.losses.log_loss(sig_logits,
+    #                                                 labels, weight=weight)
 
     tf.add_to_collection('cross_entropy', cross_entropy_mean)
 
@@ -504,25 +308,25 @@ def _add_loss_summaries(total_loss):
       loss_averages_op: op for generating moving averages of losses.
     """
     # Compute the moving average of all individual losses and the total loss.
-    # loss_averages = tf.train.ExponentialMovingAverage(0.9, name='avg')
+    loss_averages = tf.train.ExponentialMovingAverage(0.9, name='avg')
     losses = tf.get_collection('cross_entropy')
-    # loss_averages_op = loss_averages.apply(losses + [total_loss])
+    loss_averages_op = loss_averages.apply(losses + [total_loss])
 
     accuracies = tf.get_collection('accuracies')
     for a in accuracies:
         tf.scalar_summary('accuracy', a)
 
-    # Attach a scalar summary to all individual losses and the total loss;
-    # do the same for the averaged version of the losses.
-    #for l in losses + [total_loss]:
-         # Name each loss as '(raw)' and name the moving average version of the
-         # loss as the original loss name.
-         #tf.scalar_summary(l.op.name + ' (raw)', l)
-         #tf.scalar_summary(l.op.name, loss_averages.average(l))
-    for l in losses:
-        tf.scalar_summary('losses (raw)', l)
+        # Attach a scalar summary to all individual losses and the total loss;
+        # do the same for the averaged version of the losses.
+    for l in losses + [total_loss]:
+        #Name each loss as '(raw)' and name the moving average version of the
+        #loss as the original loss name.
+        tf.scalar_summary(l.op.name + ' (raw)', l)
+        tf.scalar_summary(l.op.name, loss_averages.average(l))
+    # for l in losses:
+    #     tf.scalar_summary('losses (raw)', l)
 
-    return #loss_averages_op
+    return  # loss_averages_op
 
 
 def train(total_loss, global_step):
@@ -553,7 +357,7 @@ def train(total_loss, global_step):
     _add_loss_summaries(total_loss)
 
     # Compute gradients.
-    #with tf.control_dependencies([loss_averages_op]):
+    # with tf.control_dependencies([loss_averages_op]):
     opt = tf.train.AdamOptimizer(lr, epsilon=ADAM_EPSILON)
     grads = opt.compute_gradients(total_loss)
 
@@ -619,9 +423,9 @@ def put_kernels_on_grid(kernel, grid, pad=1):
     x7 = tf.transpose(x6, (3, 0, 1, 2))
 
     # scale to [0, 1]
-    #x_min = tf.reduce_min(x7)
-    #x_max = tf.reduce_max(x7)
-    #x8 = (x7 - x_min) / (x_max - x_min)
+    # x_min = tf.reduce_min(x7)
+    # x_max = tf.reduce_max(x7)
+    # x8 = (x7 - x_min) / (x_max - x_min)
 
     return x7
 
@@ -669,9 +473,9 @@ def put_activations_on_grid(activations, grid, pad=0):
     x7 = tf.transpose(x6, (3, 0, 1, 2))
 
     # scale to [0, 1]
-    #x_min = tf.reduce_min(x7)
-    #x_max = tf.reduce_max(x7)
-    #x8 = (x7 - x_min) / (x_max - x_min)
+    # x_min = tf.reduce_min(x7)
+    # x_max = tf.reduce_max(x7)
+    # x8 = (x7 - x_min) / (x_max - x_min)
 
-    #return x8
+    # return x8
     return x7
