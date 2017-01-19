@@ -17,7 +17,7 @@ import ch.fhnw.util.color.RGB;
 
 public class MidiKeyTracker extends AbstractRenderCommand<IAudioRenderTarget> implements IPlotable {
 	private final int[] velocities = new int[128];
-	private final List<List<MidiEvent>> midiRef = new ArrayList<>();
+	private final List<List<MidiEvent>> midiRef = new ArrayList<>(1024*104);
 	private       int                   msTime;
 	private       SortedSet<MidiEvent>  refMidi = new TreeSet<>();
 	
@@ -51,10 +51,10 @@ public class MidiKeyTracker extends AbstractRenderCommand<IAudioRenderTarget> im
 								ShortMessage sm = (ShortMessage)e.getMessage();
 								switch(sm.getCommand()) {
 								case ShortMessage.NOTE_ON:
-									velocities[sm.getData1()] = sm.getData2();
+									setVelocity(sm.getData1(), sm.getData2());
 									break;
 								case ShortMessage.NOTE_OFF:
-									velocities[sm.getData1()] = 0;
+									setVelocity(sm.getData1(), 0);
 									break;
 								}
 							}
@@ -68,7 +68,11 @@ public class MidiKeyTracker extends AbstractRenderCommand<IAudioRenderTarget> im
 			throw new RenderCommandException(t);
 		}
 	}
-
+	
+	protected void setVelocity(int key, int velocity) {
+		velocities[key] = velocity;
+	}
+	
 	public int[] getVelocities() {
 		return velocities;
 	}

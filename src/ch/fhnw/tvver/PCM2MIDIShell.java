@@ -6,10 +6,12 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.net.MalformedURLException;
-import java.util.Comparator;
+import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
@@ -18,69 +20,89 @@ import javax.sound.midi.MidiChannel;
 import javax.sound.midi.MidiEvent;
 import javax.sound.midi.MidiMessage;
 import javax.sound.midi.MidiUnavailableException;
-import javax.sound.midi.Sequence;
+import javax.sound.midi.Receiver;
 import javax.sound.midi.ShortMessage;
-import javax.sound.midi.Track;
 import javax.sound.sampled.AudioFileFormat.Type;
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioFormat.Encoding;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 
 import ch.fhnw.ether.audio.IAudioRenderTarget;
 import ch.fhnw.ether.audio.JavaSoundTarget;
+import ch.fhnw.ether.audio.NullAudioTarget;
 import ch.fhnw.ether.audio.URLAudioSource;
 import ch.fhnw.ether.media.RenderCommandException;
 import ch.fhnw.ether.media.RenderProgram;
+import ch.fhnw.ether.midi.MidiToString;
+import ch.fhnw.ether.midi.URLMidiSource;
 import ch.fhnw.ether.platform.Platform;
 import ch.fhnw.ether.ui.ParameterWindow;
-import ch.fhnw.ether.ui.PlotWindow;
 import ch.fhnw.ether.ui.ParameterWindow.Flag;
+import ch.fhnw.ether.ui.PlotWindow;
 import ch.fhnw.tvver.AbstractPCM2MIDI.Flags;
 import ch.fhnw.util.ByteList;
-import ch.fhnw.util.IntList;
 import ch.fhnw.util.Log;
 import ch.fhnw.util.TextUtilities;
+import ch.fhnw.util.color.RGB;
 
 public final class PCM2MIDIShell {
 	private static final Log log = Log.create();
 
 	private final static double         SEC2US      = 1000000;
-	private final static double         US2SEC      = 1 / SEC2US;
-	private final static double         MAX_LATENCY = 0.1;
 
 	private double                      time;
-	private int                         numDetectedNotes;
 	private int                         numTrueDetectedNotes;
 	private int                         numFalseDetectedNotes;
 	private int                         numRefNotes;
-	private double                      minLat = MAX_LATENCY;
-	private double                      maxLat;
-	private double                      sumLat;
 	private final EnumSet<Flags>        flags;
 	private ByteList                    pcmOut = new ByteList();
 	private MidiChannel                 playbackChannel;
-	private Sequence                    midiSeq;
-	private Track                       midiTrack;
 	private List<MidiEvent>             pendingNoteOffs = new LinkedList<MidiEvent>();
 	private final RenderProgram<IAudioRenderTarget> program;
-	private       JavaSoundTarget       audioOut;
-	final MidiKeyTracker                tracker        = new MidiKeyTracker();
-	private TreeSet<MidiEvent>          midiRef        = new TreeSet<MidiEvent>(new Comparator<MidiEvent>() {
+	private       IAudioRenderTarget    audioOut;
+	private final File                  track;
+	boolean[]                           detected = new boolean[128];
+	private Set<File>                   midiDump = new HashSet<>();
+	final MidiKeyTracker                tracker  = new MidiKeyTracker() {
 		@Override
-		public int compare(MidiEvent o1, MidiEvent o2) {
-			int   result  = (int) (o1.getTick() - o2.getTick());
-			return result == 0 ? o1.getMessage().getMessage()[1] - o2.getMessage().getMessage()[1] : result;
-		}
-	});
+		protected void setVelocity(int key, int velocity) {
+			super.setVelocity(key, velocity);
+			if(velocity == 0) detected[key] = false;
+		};
+	};
+	private TreeSet<MidiEvent>          midiRef        = new TreeSet<MidiEvent>(URLMidiSource.MIDI_EVWNT_CMP);
 
-	public PCM2MIDIShell(File track, EnumSet<Flags> flags) throws MalformedURLException, IOException, InvalidMidiDataException {
+	public PCM2MIDIShell(File track, EnumSet<Flags> flags) throws MalformedURLException, IOException, InvalidMidiDataException {		
+		this.track = track;
 		this.flags = flags;
 
-		if(flags.contains(Flags.WAVE) || flags.contains(Flags.REPORT)) {
-			midiSeq   = new Sequence(Sequence.SMPTE_25, (int) (SEC2US / Sequence.SMPTE_25));
-			midiTrack = midiSeq.createTrack(); 
-		}
+		URLAudioSource src = new URLAudioSource(track.toURI().toURL(), 1) {
+			long lasttime;
+			@Override
+			protected void sendMidiMsg(Receiver recv, MidiMessage msg, long time) {
+				if(time - lastTime() < 0)
+					midiDump.add(track);
+				if(flags.contains(Flags.DUMP_MIDI) && !(midiDump.contains(track)))
+					System.out.println(MidiToString.toString(msg));
+				if(msg instanceof ShortMessage && ((ShortMessage)msg).getCommand() == ShortMessage.NOTE_ON) {
+					ShortMessage sm = (ShortMessage)msg;
+					if(sm.getData2() == 0)
+						super.sendMidiMsg(recv, msg, time);
+					else if(time != lastTime() && (time - lastTime() >= 1000000 || time - lastTime() < 0)) {
+						try {
+							lastTime(time);
+							msg = new ShortMessage(sm.getStatus(), sm.getData1(), 64);
+							super.sendMidiMsg(recv, msg, time);
+						} catch (Throwable t) {}
+					}
+				} else
+					super.sendMidiMsg(recv, msg, time);
+			}
 
-		URLAudioSource src = new URLAudioSource(track.toURI().toURL(), 1);
+			private long lastTime()          {return lasttime - Long.MAX_VALUE / 2;}
+			private void lastTime(long time) {lasttime = time + Long.MAX_VALUE / 2;}			
+		};
 		src.getMidiEvents(midiRef);
 		for(MidiEvent e : midiRef) {
 			MidiMessage m = e.getMessage();
@@ -88,17 +110,38 @@ public final class PCM2MIDIShell {
 				numRefNotes++;
 		}
 
+		src.getMidiEvents(midiRef);
 		tracker.setRefMidi(midiRef);
 		program = new RenderProgram<>(src, tracker);
 	}
 
-	public void start(AbstractPCM2MIDI impl) throws RenderCommandException {
+	public void start(List<AbstractPCM2MIDI> impls, int idx) throws RenderCommandException {
+		AbstractPCM2MIDI impl = impls.get(idx);
+
 		impl.initializePipeline(program);
 
-		new ParameterWindow(program, Flag.EXIT_ON_CLOSE, Flag.CLOSE_ON_STOP);
-		new PlotWindow(program);
-		
-		audioOut = new JavaSoundTarget(pcmOut);
+		new ParameterWindow(program, Flag.EXIT_ON_CLOSE, Flag.HIDE_ON_STOP) {
+			@Override
+			protected void stopped() {
+				impl.shutdown();
+				super.stopped();
+				Platform.get().runOnMainThread(()->{
+					if(idx <= impls.size()) {
+						try {
+							impls.get(idx+1).getShell().start(impls, idx+1);
+						} catch(Throwable t) {
+							Platform.get().exit();			
+						}
+					} else {
+						Platform.get().exit();			
+					}
+				});
+			}
+		};
+		if(!(getFlag(Flags.MAX_SPEED)))
+			new PlotWindow(program);
+
+		audioOut = impl.getFlag(Flags.MAX_SPEED) ? new NullAudioTarget(1, 44100) : new JavaSoundTarget(pcmOut);
 		audioOut.useProgram(program);
 		audioOut.start();
 	}
@@ -108,7 +151,6 @@ public final class PCM2MIDIShell {
 		double noteOnTime = time;
 
 		try {
-			MidiEvent noteOn  = new MidiEvent(new ShortMessage(ShortMessage.NOTE_ON,  0, key, velocity), (long) (noteOnTime * SEC2US));
 			MidiEvent noteOff = new MidiEvent(new ShortMessage(ShortMessage.NOTE_OFF, 0, key), (long) ((noteOnTime + 0.3) * SEC2US));
 
 			if(playbackChannel != null) {
@@ -116,33 +158,22 @@ public final class PCM2MIDIShell {
 				pendingNoteOffs.add(noteOff);
 			}
 
-			if(midiTrack != null) {
-				midiTrack.add(noteOn);
-				midiTrack.add(noteOff);
+			int[] vs = tracker.getVelocities();
 
-				for(MidiEvent e : midiRef.headSet(noteOn, true).descendingSet()) {
-					double lat = (noteOn.getTick() - e.getTick()) * US2SEC;
-					if(lat > MAX_LATENCY) {
-						numFalseDetectedNotes++;
-						break;
-					}
-
-					if(noteOn.getMessage().getMessage()[1] == e.getMessage().getMessage()[1]) {
-						minLat = Math.min(minLat, lat);
-						maxLat = Math.max(maxLat, lat);
-						sumLat += lat;
-						numDetectedNotes++;
+			if(velocity > 0) {
+				if(vs[key] > 0) {
+					if(!(detected[key])) {
+						tracker.bar(key/128f, RGB.GREEN);
 						numTrueDetectedNotes++;
-						break;
+						detected[key] = true;
+					} else {
+						tracker.bar(key/128f, RGB.YELLOW);
 					}
-				} 
+				} else {
+					tracker.bar(key/128f, RGB.RED);
+					numFalseDetectedNotes++;
+				}
 			}
-			IntList notes = new IntList();
-			int[]   vs    = tracker.getVelocities();
-			for(int i = 0; i < vs.length; i++)
-				if(vs[i] > 0) notes.add(i);
-			if(flags.contains(Flags.DEBUG))
-				System.out.println(key + ":" + notes);
 		} catch(Throwable t) {
 			log.warning(t);
 		}
@@ -150,23 +181,17 @@ public final class PCM2MIDIShell {
 
 	private static final String SEP = "\t";
 	String getReport() {
-		if(maxLat == 0 && numDetectedNotes == 0) maxLat = MAX_LATENCY;
-
 		String result = "";
 
-		double avgLat = numDetectedNotes == 0 ? 0 : sumLat / numDetectedNotes;
-		result += time + SEP;
+		result += (int)time + SEP;
 		result += numRefNotes + SEP;
 		result += + numTrueDetectedNotes + SEP;
 		result += + numFalseDetectedNotes + SEP;
-		result += + (int)(minLat * 1000) + SEP;
-		result += (int)(maxLat * 1000) + SEP;
-		result += (int)(avgLat * 1000) + SEP;
 
 		double trueDetectedRatio  = numTrueDetectedNotes /  (double)numRefNotes; 
 		double falseDetectedRatio = numFalseDetectedNotes / (double)numRefNotes; 
 
-		result += (1 + (5 * Math.max(0, Math.min(trueDetectedRatio-falseDetectedRatio, 1)))) + SEP;
+		result += (1 + (5 * Math.max(0, Math.min(trueDetectedRatio-0.5*falseDetectedRatio, 1)))) + SEP;
 
 		return result;
 	}
@@ -177,9 +202,6 @@ public final class PCM2MIDIShell {
 			"# of reference notes" + SEP +
 			"# of true detected notes" + SEP +
 			"# of false detected notes" + SEP +
-			"Min. Latency" + SEP +
-			"Max. Latency" + SEP +
-			"Avg. Latency" + SEP +
 			"Grade";
 
 	@SuppressWarnings("unchecked")
@@ -192,21 +214,28 @@ public final class PCM2MIDIShell {
 		Platform.get().init();
 
 		File        src    = new File(args[0]);
-		PrintWriter report = new PrintWriter(new File(src.getParent(), args[1] + "_report.txt"));
+		PrintWriter report = new PrintWriter(new File(src.isDirectory() ? src : src.getParentFile(), args[1] + "_report.txt"));
 
 		report.println(COLUMNS);
 
 		Class<AbstractPCM2MIDI> cls = (Class<AbstractPCM2MIDI>)Class.forName("ch.fhnw.tvver." + args[1]);
+		List<AbstractPCM2MIDI> pcm2midis = getInputs(src, cls);
+		if(pcm2midis.isEmpty()) {
+			System.out.println("No inputs found in '"+src+"'");
+			System.exit(1);
+		}
 
-		AbstractPCM2MIDI pcm2midi = cls.getConstructor(File.class).newInstance(src);
-		pcm2midi.getShell().start(pcm2midi);
+
+		pcm2midis.get(0).getShell().start(pcm2midis, 0);
 
 		Platform.get().addShutdownTask(new Runnable() {
 			@Override
 			public void run() {
-				if(src.isFile() && !src.getName().endsWith(".txt") && !src.getName().startsWith(".")) {
+				System.out.println("----------" + cls.getName());
+				System.out.println(COLUMNS);
+				for(AbstractPCM2MIDI pcm2midi : pcm2midis) {
+					File src = pcm2midi.getShell().getTrack();
 					String row = src.getName() + SEP;
-					System.out.println("----------" + src.getName());
 					try {
 						if(pcm2midi.getFlag(Flags.REPORT)) {
 							row += pcm2midi.getReport();
@@ -219,12 +248,33 @@ public final class PCM2MIDIShell {
 						report.println(row);
 					}
 					System.out.println(row);
-					report.close();
 				}
+				report.close();
 			}
-		});		
+		});
 
 		Platform.get().run();
+	}
+
+	protected File getTrack() {
+		return track;
+	}
+
+	private static List<AbstractPCM2MIDI> getInputs(File fileOrDir, Class<AbstractPCM2MIDI> cls) {
+		List<AbstractPCM2MIDI> result = new ArrayList<>();
+		getInputs(fileOrDir, cls, result);
+		return result;
+	}
+
+	private static void getInputs(File fileOrDir, Class<AbstractPCM2MIDI> cls, List<AbstractPCM2MIDI> result) {
+		if(fileOrDir.isDirectory()) {
+			for(File f : fileOrDir.listFiles())
+				getInputs(f, cls, result);
+		} else if(fileOrDir.isFile()) {
+			try {
+				result.add(cls.getConstructor(File.class).newInstance(fileOrDir));
+			} catch(Throwable t) {}
+		}
 	}
 
 	boolean getFlag(Flags flag) {
@@ -234,7 +284,7 @@ public final class PCM2MIDIShell {
 	void writeWAV(File file) throws IOException, ClassNotFoundException, MidiUnavailableException, IllegalAccessException, IllegalArgumentException, InvocationTargetException, NoSuchMethodException, SecurityException {
 		AudioSystem.write(
 				new AudioInputStream(new ByteArrayInputStream(pcmOut._getArray(), 0, pcmOut.size()), 
-						audioOut.getJavaSoundAudioFormat(), 
+						new AudioFormat(Encoding.PCM_SIGNED, audioOut.getSampleRate(), 16, audioOut.getNumChannels(), audioOut.getNumChannels(), audioOut.getSampleRate(), false), 
 						pcmOut.size() / 4), 
 				Type.WAVE, 
 				file);

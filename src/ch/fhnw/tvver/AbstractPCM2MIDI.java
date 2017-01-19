@@ -15,13 +15,13 @@ import ch.fhnw.ether.media.RenderCommandException;
 import ch.fhnw.ether.media.RenderProgram;
 
 public abstract class AbstractPCM2MIDI {
-	enum Flags {SYNTH, WAVE, REPORT, DEBUG}
+	enum Flags {SYNTH, WAVE, REPORT, DEBUG, MAX_SPEED, DUMP_MIDI}
 
 	private final PCM2MIDIShell p2ms;
 	private       Throwable     exception;
 
 	/**
-	 * Signal a note on MIDI event. The note will be recorded at the frame time this method is called.</code>.
+	 * Signal a note on MIDI event. The note will be recorded at the frame time this method is called.
 	 * @throws InvalidMidiDataException 
 	 */
 	protected void noteOn(int key, int velocity) {
@@ -29,14 +29,24 @@ public abstract class AbstractPCM2MIDI {
 	}
 
 	/**
-	 * Signal a note off MIDI event. The note will be recorded at the frame time this method is called.</code>.
+	 * Signal a note off MIDI event. The note will be recorded at the frame time this method is called.
 	 * @throws InvalidMidiDataException 
 	 */
 	protected void noteOff(int key, int velocity) {
 		p2ms.noteOn(key, 0);
 	}
 
+	/**
+	 * Callback to initialize analysis pipeline. Add your render commands to <code>program</code>.
+	 * 
+	 * @param program The program which will be run for analysis.
+	 */
 	protected abstract void initializePipeline(RenderProgram<IAudioRenderTarget> program);
+	
+	/**
+	 * Callback invoked at end of analysis. Add your cleanup / serialization etc. code here.
+	 */
+	protected void shutdown() {}
 
 	/**
 	 * Create a PCM2MIDI instance.
@@ -57,6 +67,10 @@ public abstract class AbstractPCM2MIDI {
 
 	protected final int[] getVelocities() {
 		return p2ms.tracker.getVelocities();
+	}
+	
+	protected MidiKeyTracker getKeyTracker() {
+		return p2ms.tracker;
 	}
 
 	//--- internal interface

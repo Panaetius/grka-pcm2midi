@@ -18,7 +18,6 @@ import ch.fhnw.ether.midi.MidiFrame;
 import ch.fhnw.ether.midi.NullMidiTarget;
 import ch.fhnw.ether.midi.URLMidiSource;
 
-
 public class MIDIKeyHistogram {
 	static int[] keys = new int[128];
 
