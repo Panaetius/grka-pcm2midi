@@ -79,15 +79,22 @@ def read_grka(filename_queue, data_dir):
         })
 
     result.label = features['label']
-    fft1 = tf.fft(tf.complex(features['data'], 0.0))
-    fft2 = tf.fft(tf.complex(tf.reshape(features['data'], [3, 735]),
-                             0.0))
-    fft3 = tf.fft(tf.complex(tf.reshape(features['data'], [5,441]),
-                            0.0))
-    out1 = tf.concat(0, [tf.complex_abs(fft1), atan2(fft1)])
-    out2 = tf.reshape(tf.concat(1, [tf.complex_abs(fft2), atan2(fft2)]), [-1])
-    out3 = tf.reshape(tf.concat(1, [tf.complex_abs(fft3), atan2(fft3)]), [-1])
-    result.uint8image = tf.concat(0, [out1, out2, out3])
+    # fft1 = tf.fft(tf.complex(features['data'], 0.0))
+    # fft2 = tf.fft(tf.complex(tf.reshape(features['data'], [3, 735]),
+    #                          0.0))
+    # fft3 = tf.fft(tf.complex(tf.reshape(features['data'], [5,441]),
+    #                         0.0))
+    # out1 = tf.concat(0, [tf.complex_abs(fft1), atan2(fft1)])
+    # out2 = tf.reshape(tf.concat(1, [tf.complex_abs(fft2), atan2(fft2)]), [-1])
+    # out3 = tf.reshape(tf.concat(1, [tf.complex_abs(fft3), atan2(fft3)]), [-1])
+    data = tf.complex(features['data'], 0.0)
+    window_width = 735
+    shift = 10
+    sliding = tf.concat(0, [tf.reshape(data[i:i + window_width], [1,
+                                                                  window_width])
+                            for i in
+                            range(0, IMAGE_SIZE - window_width + 1, shift)])
+    result.uint8image = tf.complex_abs(tf.fft(sliding))
 
     return result
 
@@ -126,10 +133,8 @@ def _generate_image_and_label_batch(image, label, min_queue_examples,
             capacity=min_queue_examples + 3 * batch_size)
 
     # Display the training images in the visualizer.
-    tf.summary.audio('audio', images, 44100)
-    tf.summary.image('images', tf.expand_dims(tf.reshape(images, [batch_size,
-                                                                  13230,
-                                                                  1]), 1),
+    #tf.summary.audio('audio', images, 44100)
+    tf.summary.image('images', images,
                      max_outputs=16)
 
     return images, tf.reshape(label_batch, [batch_size, NUM_CLASSES])
@@ -146,7 +151,7 @@ def distorted_inputs(data_dir, batch_size):
       images: Images. 4D tensor of [batch_size, IMAGE_SIZE, IMAGE_SIZE, 3] size.
       labels: Labels. 1D tensor of [batch_size] size.
     """
-    #filenames = [os.path.join(data_dir, 'data.csv')]
+    # filenames = [os.path.join(data_dir, 'data.csv')]
     filenames = [os.path.join(data_dir, 'data.tfrecords')]
     # for i in xrange(1, 6)]
     for f in filenames:
@@ -159,6 +164,7 @@ def distorted_inputs(data_dir, batch_size):
     # Read examples from files in the filename queue.
     read_input = read_grka(filename_queue, data_dir)
     distorted_image = tf.cast(read_input.uint8image, tf.float32)
+    distorted_image = tf.reshape(distorted_image, [148, 735, 1])
 
     height = IMAGE_SIZE
     width = IMAGE_SIZE
@@ -167,21 +173,21 @@ def distorted_inputs(data_dir, batch_size):
     # distortions applied to the image.
 
     # Randomly crop a [height, width] section of the image.
-    #distorted_image = tf.random_crop(reshaped_image, [height, width, 3])
+    # distorted_image = tf.random_crop(reshaped_image, [height, width, 3])
 
     # Randomly flip the image horizontally.
-    #distorted_image = tf.image.random_flip_left_right(distorted_image)
+    # distorted_image = tf.image.random_flip_left_right(distorted_image)
 
     # Because these operations are not commutative, consider randomizing
     # the order their operation.
-    #distorted_image = tf.image.random_brightness(distorted_image,
+    # distorted_image = tf.image.random_brightness(distorted_image,
     #                                             max_delta=75)
-    #distorted_image = tf.image.random_contrast(distorted_image,
+    # distorted_image = tf.image.random_contrast(distorted_image,
     #                                           lower=0.2, upper=1.8)
-    #distorted_image = tf.image.random_hue(distorted_image, max_delta=0.05)
+    # distorted_image = tf.image.random_hue(distorted_image, max_delta=0.05)
 
     # Subtract off the mean and divide by the variance of the pixels.
-    #float_image = tf.image.per_image_whitening(distorted_image)
+    float_image = tf.image.per_image_whitening(distorted_image)
 
     # Ensure that the random shuffling has good mixing properties.
     min_fraction_of_examples_in_queue = 0.1
@@ -191,7 +197,7 @@ def distorted_inputs(data_dir, batch_size):
           'This will take a few minutes.' % min_queue_examples)
 
     # Generate a batch of images and labels by building up a queue of examples.
-    return _generate_image_and_label_batch(distorted_image, read_input.label,
+    return _generate_image_and_label_batch(float_image, read_input.label,
                                            min_queue_examples, batch_size,
                                            shuffle=True)
 
@@ -228,9 +234,8 @@ def inputs(eval_data, data_dir, batch_size):
     read_input = read_grka(data_queue, data_dir)
     reshaped_image = tf.cast(read_input.uint8image, tf.float32)
 
-
     # Subtract off the mean and divide by the variance of the pixels.
-    #float_image = tf.image.per_image_whitening(reshaped_image)
+    # float_image = tf.image.per_image_whitening(reshaped_image)
 
     # Ensure that the random shuffling has good mixing properties.
     min_fraction_of_examples_in_queue = 0.1
@@ -241,6 +246,7 @@ def inputs(eval_data, data_dir, batch_size):
     return _generate_image_and_label_batch(reshaped_image, read_input.label,
                                            min_queue_examples, batch_size,
                                            shuffle=False)
+
 
 def atan2(c):
     x = tf.real(c)
