@@ -12,7 +12,7 @@ import numpy as np
 # Process images of this size. Note that this differs from the original grka
 # image size of 32 x 32. If one alters this number, then the entire model
 # architecture will change and any model would need to be retrained.
-IMAGE_SIZE = 2205
+IMAGE_SIZE = 4410
 
 # Global constants describing the grka data set.
 NUM_CLASSES = 128
@@ -87,14 +87,14 @@ def read_grka(filename_queue, data_dir):
     # out1 = tf.concat(0, [tf.complex_abs(fft1), atan2(fft1)])
     # out2 = tf.reshape(tf.concat(1, [tf.complex_abs(fft2), atan2(fft2)]), [-1])
     # out3 = tf.reshape(tf.concat(1, [tf.complex_abs(fft3), atan2(fft3)]), [-1])
-    data = tf.complex(features['data'], 0.0)
-    window_width = 735
-    shift = 10
-    sliding = tf.concat(0, [tf.reshape(data[i:i + window_width], [1,
-                                                                  window_width])
-                            for i in
-                            range(0, IMAGE_SIZE - window_width + 1, shift)])
-    result.uint8image = tf.complex_abs(tf.fft(sliding))
+    # data = tf.complex(features['data'], 0.0)
+    # window_width = 735
+    # shift = 10
+    # sliding = tf.concat(0, [tf.reshape(data[i:i + window_width], [1,
+    #                                                               window_width])
+    #                         for i in
+    #                         range(0, IMAGE_SIZE - window_width + 1, shift)])
+    result.uint8image = features['data']#tf.complex_abs(tf.fft(sliding))
 
     return result
 
@@ -134,8 +134,8 @@ def _generate_image_and_label_batch(image, label, min_queue_examples,
 
     # Display the training images in the visualizer.
     #tf.summary.audio('audio', images, 44100)
-    tf.summary.image('images', images,
-                     max_outputs=16)
+    # tf.summary.image('images', images,
+    #                  max_outputs=16)
 
     return images, tf.reshape(label_batch, [batch_size, NUM_CLASSES])
 
@@ -164,7 +164,7 @@ def distorted_inputs(data_dir, batch_size):
     # Read examples from files in the filename queue.
     read_input = read_grka(filename_queue, data_dir)
     distorted_image = tf.cast(read_input.uint8image, tf.float32)
-    distorted_image = tf.reshape(distorted_image, [148, 735, 1])
+    # distorted_image = tf.reshape(distorted_image, [148, 735, 1])
 
     height = IMAGE_SIZE
     width = IMAGE_SIZE
@@ -187,17 +187,17 @@ def distorted_inputs(data_dir, batch_size):
     # distorted_image = tf.image.random_hue(distorted_image, max_delta=0.05)
 
     # Subtract off the mean and divide by the variance of the pixels.
-    float_image = tf.image.per_image_whitening(distorted_image)
+    # float_image = tf.image.per_image_whitening(distorted_image)
 
     # Ensure that the random shuffling has good mixing properties.
-    min_fraction_of_examples_in_queue = 0.1
+    min_fraction_of_examples_in_queue = 0.03
     min_queue_examples = int(NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN *
                              min_fraction_of_examples_in_queue)
     print('Filling queue with %d grka images before starting to train. '
           'This will take a few minutes.' % min_queue_examples)
 
     # Generate a batch of images and labels by building up a queue of examples.
-    return _generate_image_and_label_batch(float_image, read_input.label,
+    return _generate_image_and_label_batch(distorted_image, read_input.label,
                                            min_queue_examples, batch_size,
                                            shuffle=True)
 
@@ -238,7 +238,7 @@ def inputs(eval_data, data_dir, batch_size):
     # float_image = tf.image.per_image_whitening(reshaped_image)
 
     # Ensure that the random shuffling has good mixing properties.
-    min_fraction_of_examples_in_queue = 0.1
+    min_fraction_of_examples_in_queue = 0.03
     min_queue_examples = int(num_examples_per_epoch *
                              min_fraction_of_examples_in_queue)
 

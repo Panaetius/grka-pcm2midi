@@ -61,7 +61,7 @@ def train():
 
         # Build a Graph that computes the logits predictions from the
         # inference model.
-        logits = grka.inference(images)
+        logits = grka.inference(images, True)
 
         # Calculate loss.
         loss = grka.loss(logits, labels)
@@ -115,6 +115,13 @@ def train():
                 recall = tf.div(tp,l)
                 f1 = tf.mul(2.0, tf.div(tf.mul(precision, recall), tf.add(
                     precision, recall)))
+
+                train_pred = sess.run(prediction)
+                train_corrpred = sess.run(correct_prediction)
+                train_lab = sess.run(lab)
+                train_tp = sess.run(tp)
+                train_p = sess.run(p)
+                train_l = sess.run(l)
                 train_acc = sess.run(accuracy)
                 tf.scalar_summary('accuracy', accuracy)
 
@@ -125,8 +132,8 @@ def train():
                 train_f1 = sess.run(f1)
                 tf.summary.scalar('f1', f1)
 
-                format_str = ('%s: step %d, loss = %.2f, accuracy = %.2f '
-                              'precision = %.2f, recall = %.2f, f1 = %.2f '
+                format_str = ('%s: step %d, loss = %.2f, accuracy = %.3f '
+                              'precision = %.3f, recall = %.3f, f1 = %.3f '
                               '(%.1f examples/sec; %.3f sec/batch)')
                 print(format_str % (datetime.now(), step, loss_value, train_acc,
                                     train_prec, train_rec, train_f1,

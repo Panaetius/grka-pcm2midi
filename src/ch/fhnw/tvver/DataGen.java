@@ -60,6 +60,7 @@ public class DataGen extends AbstractPCM2MIDI {
 
 		private HashSet<Integer> currentMidiRef = new HashSet<>();
 		private HashSet<Integer> currentMidiRefOff = new HashSet<>();
+		private int[] activeMidi = new int[128];
 
 		private List<Float> currentSamples = new LinkedList<>();
 
@@ -67,6 +68,7 @@ public class DataGen extends AbstractPCM2MIDI {
 		private BufferedWriter buffer;
 		private int hertz = 44100;
 		private int msOffset = 50;
+		private int msLength = 100;
 
 		public PCM2MIDI() {
 			super();
@@ -143,16 +145,19 @@ public class DataGen extends AbstractPCM2MIDI {
 
 					//buffer.write("audiotest start");
 					//buffer.newLine();
-					if(msTime - lastWriteTime >= msOffset){
-						lastWriteTime = lastWriteTime + msOffset;
+					if(msTime - lastWriteTime >= msOffset && msTime > msLength){
+						lastWriteTime = Math.max(lastWriteTime + msOffset, msLength);
 						
-						List<Float> curSamples = currentSamples.subList(0, hertz * msOffset / 1000);
+						List<Float> curSamples = new ArrayList<Float>(currentSamples.subList(0, hertz * msLength / 1000));
 						currentSamples = new ArrayList<Float>(currentSamples.subList(hertz * msOffset / 1000, currentSamples.size()));
 
 						int [] midiRefArray = new int[128];
 
 						for(Integer mr : currentMidiRef){
-							midiRefArray[mr] = 1;
+							if(activeMidi[mr] < 2){
+								midiRefArray[mr] = 1;
+								activeMidi[mr]++;
+							}
 						}
 
 						buffer.write(curSamples.stream()
@@ -166,6 +171,7 @@ public class DataGen extends AbstractPCM2MIDI {
 						//currentMidiRef = new HashSet<Integer>();
 						for(Integer r : currentMidiRefOff){
 							currentMidiRef.remove(r);
+							activeMidi[r] = 0;
 						}
 
 						currentMidiRefOff = new HashSet<>();
