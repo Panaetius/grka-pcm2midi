@@ -41,7 +41,7 @@ tf.app.flags.DEFINE_integer('max_steps', 100000,
                             """Number of batches to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_float('dropout_keep_probability', 0.5,
+tf.app.flags.DEFINE_float('dropout_keep_probability', 0.75,
                           """How many nodes to keep during dropout""")
 
 
@@ -55,6 +55,9 @@ def train():
                                            tf.float32),
                                   name='conf_matrix',
                                   trainable=False)
+
+        input_placeholder = tf.placeholder(tf.float32, shape=(None,
+                                                               grka.IMAGE_SIZE))
 
         # Get images and labels for grka.
         images, labels = grka.distorted_inputs()
@@ -101,13 +104,24 @@ def train():
                 num_examples_per_step = FLAGS.batch_size
                 examples_per_sec = num_examples_per_step / duration
                 sec_per_batch = float(duration)
-                prediction = tf.round(tf.nn.sigmoid(logits))
-                correct_prediction = tf.equal(prediction,
-                                              tf.cast(labels, tf.float32))
+                # prediction = tf.round(tf.nn.sigmoid(logits))
+                prediction = tf.cast(tf.one_hot(tf.argmax(logits, 1), 129),
+                                     tf.float32)
+
+                labels = tf.cast(labels, tf.float32)
+
+                zs = tf.reduce_sum(labels, 1)
+                no_lab = tf.reshape(
+                    tf.cast(tf.equal(zs, tf.zeros_like(zs)), tf.float32),
+                    [FLAGS.batch_size, 1])
+
+                labels2 = tf.concat(1, [labels, no_lab])
+                correct_prediction = tf.equal(tf.argmax(prediction, 1),
+                                              tf.argmax(labels2, 1))
                 accuracy = tf.reduce_mean(tf.cast(correct_prediction,
                                                   tf.float32))
 
-                lab = tf.cast(labels, tf.float32)
+                lab = labels2
                 tp = tf.reduce_sum(tf.mul(prediction, lab))
                 p = tf.reduce_sum(prediction)
                 l = tf.reduce_sum(lab)
@@ -116,12 +130,6 @@ def train():
                 f1 = tf.mul(2.0, tf.div(tf.mul(precision, recall), tf.add(
                     precision, recall)))
 
-                train_pred = sess.run(prediction)
-                train_corrpred = sess.run(correct_prediction)
-                train_lab = sess.run(lab)
-                train_tp = sess.run(tp)
-                train_p = sess.run(p)
-                train_l = sess.run(l)
                 train_acc = sess.run(accuracy)
                 tf.scalar_summary('accuracy', accuracy)
 
@@ -145,8 +153,17 @@ def train():
 
             # Save the model checkpoint periodically.
             if step % 1000 == 0 or (step + 1) == FLAGS.max_steps:
+                saver_def = saver.as_saver_def()
+                print(saver_def.filename_tensor_name)
+                print(saver_def.restore_op_name)
                 checkpoint_path = os.path.join(FLAGS.train_dir, 'model.ckpt')
                 saver.save(sess, checkpoint_path, global_step=step)
+                tf.train.write_graph(sess.graph_def, FLAGS.train_dir,
+                                     'model.proto',
+                                     as_text=False)
+                tf.train.write_graph(sess.graph_def, FLAGS.train_dir,
+                                     'model.txt',
+                                     as_text=True)
 
 
 def main(argv=None):  # pylint: disable=unused-argument

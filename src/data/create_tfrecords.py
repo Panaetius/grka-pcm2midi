@@ -22,7 +22,7 @@ for line in lines:
         current_inactive_count += 1
         num = 1
     else:
-        num = current_inactive_count
+        num = 3 * current_inactive_count
         current_inactive_count = 0
 
     example = tf.train.Example(features=tf.train.Features(feature={

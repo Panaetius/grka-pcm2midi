@@ -140,6 +140,8 @@ def evaluate():
         eval_data = FLAGS.eval_data == 'test'
         images, labels = grka.inputs(eval_data=eval_data)
 
+        images = tf.Variable(tf.zeros([128, 4410]), "images")
+
         # Build a Graph that computes the logits predictions from the
         # inference model.
         logits = grka.inference(images, False)
@@ -152,10 +154,10 @@ def evaluate():
         #     num_classes=grka.NUM_CLASSES)
 
         # Restore the moving average version of the learned variables for eval.
-        variable_averages = tf.train.ExponentialMovingAverage(
-            grka.MOVING_AVERAGE_DECAY)
-        variables_to_restore = variable_averages.variables_to_restore()
-        saver = tf.train.Saver(variables_to_restore,
+        # variable_averages = tf.train.ExponentialMovingAverage(
+        #     grka.MOVING_AVERAGE_DECAY)
+        # variables_to_restore = variable_averages.variables_to_restore()
+        saver = tf.train.Saver(
                                write_version=tf.train.SaverDef.V2)
 
         # Build the summary operation based on the TF collection of Summaries.

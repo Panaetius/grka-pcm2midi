@@ -28,7 +28,7 @@ import grka_input
 FLAGS = tf.app.flags.FLAGS
 
 # Basic model parameters.
-tf.app.flags.DEFINE_integer('batch_size', 64,
+tf.app.flags.DEFINE_integer('batch_size', 128,
                             """Number of images to process in a batch.""")
 tf.app.flags.DEFINE_string('data_dir', os.path.join(os.path.dirname(__file__),
                                                     os.pardir, os.pardir,
@@ -45,9 +45,9 @@ NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = grka_input.NUM_EXAMPLES_PER_EPOCH_FOR_EVAL
 
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999  # The decay to use for the moving average.
-NUM_EPOCHS_PER_DECAY = 5  # Epochs after which learning rate decays.
-LEARNING_RATE_DECAY_FACTOR = 0.1  # Learning rate decay factor.
-INITIAL_LEARNING_RATE = 0.003  # Initial learning rate. 0.00007
+NUM_EPOCHS_PER_DECAY = 10  # Epochs after which learning rate decays.
+LEARNING_RATE_DECAY_FACTOR = 0.25  # Learning rate decay factor.
+INITIAL_LEARNING_RATE = 0.001  # Initial learning rate. 0.00007
 WEIGHT_DECAY = 0.0015
 ADAM_EPSILON = 0.0001
 
@@ -171,6 +171,12 @@ def inference(images, isTraining=False):
     # If we only ran this model on a single GPU, we could simplify this function
     # by replacing all instances of tf.get_variable() with tf.Variable().
 
+    images = tf.identity(images, name="inference_input")
+
+    batch_size = images.get_shape()[0].value
+
+    keepProp = tf.identity(FLAGS.dropout_keep_probability, name="keepProb")
+
     spect = tf.complex_abs(tf.fft(tf.complex(images * hamming, tf.zeros_like(
         images))))
 
@@ -182,89 +188,55 @@ def inference(images, isTraining=False):
                                                        hamming2,
                                                        tf.zeros_like(images[:,
                                                        i:i + window_width])),
-                                 [FLAGS.batch_size, window_width])
+                                 [batch_size, window_width])
                       for i in range(0, IMAGE_SIZE - window_width + 1, shift)]
 
     data = tf.reshape(tf.transpose(tf.complex_abs(tf.fft(data)), [1, 0, 2]),
-                      [FLAGS.batch_size, 2205 * 4])
+                      [batch_size, 2205 * 4])
 
     spect = tf.concat(1, [spect, data])
 
     tf.summary.image('images',
-                     tf.reshape(spect, [FLAGS.batch_size, 1, 13230, 1]),
+                     tf.reshape(spect, [batch_size, 1, 13230, 1]),
                      max_outputs=16)
 
     # local3
     with tf.variable_scope('local1') as scope:
         # Move everything into depth so we can perform a single matrix multiply.
         # reshape = tf.reshape(spect, [FLAGS.batch_size, -1])
-        dim = spect.get_shape()[1].value
+        dim = 13230
         weights = _variable_with_weight_decay('weights', shape=[dim, 13230],
                                               connections=13230 + 13230,
                                               wd=WEIGHT_DECAY)
         bn1 = batch_norm_wrapper(tf.matmul(spect, weights),
                                  is_training=isTraining)
         local1 = tf.nn.elu(bn1, name=scope.name)
-        local1 = tf.nn.dropout(local1, FLAGS.dropout_keep_probability)
+        local1 = tf.nn.dropout(local1, keepProp)
         _activation_summary(local1)
 
     # local3
     with tf.variable_scope('local2') as scope:
         # Move everything into depth so we can perform a single matrix multiply.
         # reshape = tf.reshape(spect, [FLAGS.batch_size, -1])
-        weights = _variable_with_weight_decay('weights', shape=[13230, 8820],
-                                              connections=13230 + 8820,
+        weights = _variable_with_weight_decay('weights', shape=[13230, 6615],
+                                              connections=13230 + 6615,
                                               wd=WEIGHT_DECAY)
         bn2 = batch_norm_wrapper(tf.matmul(local1, weights),
                                  is_training=isTraining)
         local2 = tf.nn.elu(bn2, name=scope.name)
-        local2 = tf.nn.dropout(local2, FLAGS.dropout_keep_probability)
+        local2 = tf.nn.dropout(local2, keepProp)
         _activation_summary(local2)
-
-    # local3
-    with tf.variable_scope('local3') as scope:
-        # Move everything into depth so we can perform a single matrix multiply.
-        # reshape = tf.reshape(spect, [FLAGS.batch_size, -1])
-        dim = spect.get_shape()[1].value
-        weights = _variable_with_weight_decay('weights', shape=[8820, 4410],
-                                              connections=8820 + 4410,
-                                              wd=WEIGHT_DECAY)
-        bn3 = batch_norm_wrapper(tf.matmul(local2, weights),
-                                 is_training=isTraining)
-        local3 = tf.nn.elu(bn3, name=scope.name)
-        local3 = tf.nn.dropout(local3, FLAGS.dropout_keep_probability)
-        _activation_summary(local3)
-
-    # local4
-    with tf.variable_scope('local4') as scope:
-        weights = _variable_with_weight_decay('weights', shape=[4410, 4410],
-                                              connections=4410 + 4410,
-                                              wd=WEIGHT_DECAY)
-        bn4 = batch_norm_wrapper(tf.matmul(local3, weights),
-                                 is_training=isTraining)
-        local4 = tf.nn.elu(bn4, name=scope.name)
-        local4 = tf.nn.dropout(local4, FLAGS.dropout_keep_probability)
-        _activation_summary(local4)
-
-        # local5
-    with tf.variable_scope('local5') as scope:
-        weights = _variable_with_weight_decay('weights', shape=[4410, 128],
-                                              connections=4410 + 128,
-                                              wd=WEIGHT_DECAY)
-        bn5 = batch_norm_wrapper(tf.matmul(local4, weights),
-                                 is_training=isTraining)
-        local5 = tf.nn.elu(bn5, name=scope.name)
-        local5 = tf.nn.dropout(local5, FLAGS.dropout_keep_probability)
-        _activation_summary(local5)
 
     # softmax, i.e. softmax(WX + b)
     with tf.variable_scope('softmax_linear') as scope:
-        weights = _variable_with_weight_decay('weights', [128, NUM_CLASSES],
-                                              connections=128 + NUM_CLASSES,
+        weights = _variable_with_weight_decay('weights', [6615, NUM_CLASSES +
+                                                          1],
+                                              connections=6615 + NUM_CLASSES
+                                                          + 1,
                                               wd=0.0)
-        biases = _variable_on_cpu('biases', [NUM_CLASSES],
+        biases = _variable_on_cpu('biases', [NUM_CLASSES + 1],
                                   tf.constant_initializer(0.0))
-        softmax_linear = tf.add(tf.matmul(local5, weights), biases,
+        softmax_linear = tf.add(tf.matmul(local2, weights), biases,
                                 name=scope.name)
         _activation_summary(softmax_linear)
 
@@ -282,15 +254,22 @@ def loss(logits, labels):
       Loss tensor of type float.
     """
     # Calculate the average cross entropy loss across the batch.
-    sig_logits = tf.nn.sigmoid(logits)
-    sigmoid_logits = tf.round(sig_logits)
+    labels = tf.cast(labels, tf.float32)
+
+    zs = tf.reduce_sum(labels, 1)
+    no_lab = tf.reshape(tf.cast(tf.equal(zs, tf.zeros_like(zs)), tf.float32),
+                        [FLAGS.batch_size, 1])
+
+    labels = tf.concat(1, [labels, no_lab])
+
     # sigmoid_logits = tf.Print(sigmoid_logits, [sigmoid_logits],
     #                           message="sigmoid_logits: ", summarize=128)
     # labels = tf.Print(labels, [labels], message="labels: ", summarize=128)
-    labels = tf.cast(labels, tf.float32)
 
-    correct_prediction = tf.equal(sigmoid_logits, labels)
-    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+    correct_prediction = tf.equal(tf.argmax(logits, 1),
+                                  tf.argmax(labels, 1))
+    accuracy = tf.reduce_mean(tf.cast(correct_prediction,
+                                      tf.float32))
     tf.add_to_collection('accuracies', accuracy)
 
     # curr_conf_matrix = tf.cast(
@@ -314,25 +293,14 @@ def loss(logits, labels):
 
     # cross_entropy = tf.nn.sigmoid_cross_entropy_with_logits(
     #    logits, labels, name='cross_entropy_per_example')
-    cross_entropy = tf.nn.weighted_cross_entropy_with_logits(
-        logits, labels, 128.0, name='cross_entropy_per_example')
+
+    cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
+        logits, labels/tf.add(tf.reduce_sum(labels, 1, keep_dims=True), 1e-6),
+        name='cross_entropy_per_example')
     cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
-
-    count = tf.tile(
-        tf.reshape((128.0 / tf.clip_by_value(tf.reduce_sum(labels, 1), 1,
-                                             128) - 1.0),
-                   [FLAGS.batch_size, 1]),
-        tf.pack([1, 128]))
-    weight = tf.add(tf.mul(labels, count), 1)
-    # weight = tf.Print(weight,[weight],"Weights:",
-    # summarize=128*FLAGS.batch_size)
-
-    # cross_entropy_mean = tf.contrib.losses.log_loss(sig_logits,
-    #                                                 labels, weight=weight)
+    tf.add_to_collection('losses', cross_entropy_mean)
 
     tf.add_to_collection('cross_entropy', cross_entropy_mean)
-
-    tf.add_to_collection('losses', cross_entropy_mean)
 
     # The total loss is defined as the cross entropy loss plus all of the weight
     # decay terms (L2 loss).
