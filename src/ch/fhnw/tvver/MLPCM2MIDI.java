@@ -1,8 +1,13 @@
 package ch.fhnw.tvver;
 
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.FloatBuffer;
@@ -35,8 +40,6 @@ import ch.fhnw.ether.media.IScheduler;
 import ch.fhnw.ether.media.Parameter;
 import ch.fhnw.ether.media.RenderCommandException;
 import ch.fhnw.ether.media.RenderProgram;
-import org.apache.xmlrpc.*;
-import org.apache.xmlrpc.client.*;
 
 /**
  * A fake PCM2MIDI implementation which jitters the reference notes
@@ -64,7 +67,9 @@ public class MLPCM2MIDI extends AbstractPCM2MIDI {
 		private       int                   msTime;
 
 		private List<Float> currentSamples = new LinkedList<>();
-		private XmlRpcClient server = new XmlRpcClient();
+		private Process process;
+		private BufferedReader isr;
+		private OutputStreamWriter osr;
 
 		private int lastWriteTime = 0;
 		private BufferedWriter buffer;
@@ -79,20 +84,40 @@ public class MLPCM2MIDI extends AbstractPCM2MIDI {
 		@Override
 		protected void init(IAudioRenderTarget target) throws RenderCommandException {
 			super.init(target);
-			XmlRpcClientConfigImpl config = new XmlRpcClientConfigImpl();
-		    try {
-				config.setServerURL(new URL("http://localhost:8765/RPC2"));
-//				config.setEnabledForExtensions(true);
-			} catch (MalformedURLException e) {
-				// TODO Auto-generated catch block
+
+			try {
+				ProcessBuilder p = new ProcessBuilder("/home/zenon/anaconda3/envs/tensorflow/bin/python","commandline_server.py");
+				p.directory(new File(System.getProperty("user.dir") + "/src/models/"));
+				p.redirectError(new File("error.txt"));
+				process = p.start();
+				isr = new BufferedReader(new InputStreamReader(process.getInputStream()));
+				osr = new OutputStreamWriter(process.getOutputStream());
+				
+				//wait for tensorflow to be ready
+				Boolean ready = false;
+				
+				String line = null;
+				while(!ready){
+					while((line = isr.readLine()) == null){
+						
+					}
+					
+					if(line.equals("ready"))
+					{
+						ready = true;
+					}
+				}
+				
+			} catch (Exception e) {
 				e.printStackTrace();
 			}
-		    server.setConfig(config);
 		}
 
 		@Override
 		protected void run(IAudioRenderTarget target) throws RenderCommandException {
 			try {
+				CheckProcessAlive();
+				
 				int msTimeLimit = (int) (target.getFrame().playOutTime * IScheduler.SEC2MS);
 				
 				for(float f : target.getFrame().getMonoSamples()){ 
@@ -108,18 +133,25 @@ public class MLPCM2MIDI extends AbstractPCM2MIDI {
 						List<Float> curSamples = new ArrayList<Float>(currentSamples.subList(0, hertz * msLength / 1000));
 						currentSamples = new ArrayList<Float>(currentSamples.subList(hertz * msOffset / 1000, currentSamples.size()));
 						
-//						HashMap<String,List<Float>> params = new HashMap<String,List<Float>>();
-//						params.put("images", curSamples);
-//						Object[] requestParams = new Object[] { null };
-//						requestParams[0] = params;
-						List<Double> doubleList = new ArrayList<Double>();
 						
-						for(float f : curSamples){
-							doubleList.add((double)f);
+						osr.write(curSamples.stream()
+								.map(f -> String.format("%f", f))
+								.collect(Collectors.joining(",") ) + "\n");
+						
+						osr.flush();
+						
+						
+						
+						String line = null;
+						
+						while((line = isr.readLine()) == null || line.length() == 0) {
+							CheckProcessAlive();
 						}
-						Object[] params = new Object[]{doubleList};
 						
-						Integer result = (Integer)server.execute("inference", params);
+						
+						
+						
+						Integer result = Integer.parseInt(line);
 						
 						if(result < 128){
 							noteOn(result, 100);
@@ -129,6 +161,16 @@ public class MLPCM2MIDI extends AbstractPCM2MIDI {
 				}
 			} catch(Throwable t) {
 				throw new RenderCommandException(t);
+			}
+		}
+
+		private void CheckProcessAlive() throws IOException, RenderCommandException {
+			if(!this.process.isAlive()){
+				String line = null;
+				while((line = (new BufferedReader(new InputStreamReader(this.process.getErrorStream()))).readLine()) != null){
+					System.out.println(line);
+				}
+				throw new RenderCommandException("process died");
 			}
 		}
 	}
