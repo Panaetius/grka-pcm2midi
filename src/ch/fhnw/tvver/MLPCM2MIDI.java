@@ -33,6 +33,8 @@ import javax.sound.sampled.UnsupportedAudioFileException;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 
+import org.eclipse.swt.program.Program;
+
 import ch.fhnw.ether.audio.IAudioRenderTarget;
 import ch.fhnw.ether.audio.fx.AutoGain;
 import ch.fhnw.ether.media.AbstractRenderCommand;
@@ -50,7 +52,7 @@ import ch.fhnw.ether.media.RenderProgram;
  */
 public class MLPCM2MIDI extends AbstractPCM2MIDI {
 	public MLPCM2MIDI(File track) throws UnsupportedAudioFileException, IOException, MidiUnavailableException, InvalidMidiDataException, RenderCommandException {
-		super(track, EnumSet.of(Flags.REPORT, Flags.WAVE));
+		super(track, EnumSet.of(Flags.REPORT, Flags.WAVE, Flags.MAX_SPEED));
 	}
 
 	@Override
@@ -76,6 +78,9 @@ public class MLPCM2MIDI extends AbstractPCM2MIDI {
 		private int hertz = 44100;
 		private int msOffset = 50;
 		private int msLength = 100;
+		private int currentFrame = 0;
+		private int lastNote = 0;
+		private int lastNoteFrame = 0;
 
 		public PCM2MIDI() {
 			super();
@@ -86,7 +91,7 @@ public class MLPCM2MIDI extends AbstractPCM2MIDI {
 			super.init(target);
 
 			try {
-				ProcessBuilder p = new ProcessBuilder("/home/zenon/anaconda3/envs/tensorflow/bin/python","commandline_server.py");
+				ProcessBuilder p = new ProcessBuilder("python","commandline_server.py");
 				p.directory(new File(System.getProperty("user.dir") + "/src/models/"));
 				p.redirectError(new File("error.txt"));
 				process = p.start();
@@ -99,7 +104,7 @@ public class MLPCM2MIDI extends AbstractPCM2MIDI {
 				String line = null;
 				while(!ready){
 					while((line = isr.readLine()) == null){
-						
+						CheckProcessAlive();
 					}
 					
 					if(line.equals("ready"))
@@ -146,6 +151,7 @@ public class MLPCM2MIDI extends AbstractPCM2MIDI {
 						
 						while((line = isr.readLine()) == null || line.length() == 0) {
 							CheckProcessAlive();
+							Thread.sleep(2);
 						}
 						
 						
@@ -154,14 +160,27 @@ public class MLPCM2MIDI extends AbstractPCM2MIDI {
 						Integer result = Integer.parseInt(line);
 						
 						if(result < 128){
-							noteOn(result, 100);
+							//don't say the same note twice in a row
+							if(!(lastNoteFrame == currentFrame - 1 && lastNote == result)){
+								noteOn(result, 100);
+							}
+							
+							lastNote = result;
+							lastNoteFrame = currentFrame;
 						}
+						
+						currentFrame++;
 						
 					}
 				}
 			} catch(Throwable t) {
 				throw new RenderCommandException(t);
 			}
+		}
+		
+		@Override
+		protected void finalize(){
+			process.destroy();
 		}
 
 		private void CheckProcessAlive() throws IOException, RenderCommandException {

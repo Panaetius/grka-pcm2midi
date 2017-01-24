@@ -45,7 +45,13 @@ class MLServer(object):
         images = np.reshape(data, (1, 4410))
         predictions = self.logits.eval(feed_dict={self.images: images},
                                        session=self.sess)
-        return np.argmax(predictions).item()
+        result = np.argmax(predictions).item()
+        if result < 128:
+            print(np.array2string(self.softmax(predictions)) + " " + str(
+                result),
+                  file=sys.stderr)
+
+        return result
 
     def setup(self):
         self.g = tf.Graph().as_default()
@@ -76,6 +82,7 @@ class MLServer(object):
         ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_dir)
         if ckpt and ckpt.model_checkpoint_path:
             # Restores from checkpoint
+            self.sess.run(tf.initialize_all_variables())
             saver.restore(self.sess, FLAGS.checkpoint_dir +
             os.path.basename(
                 ckpt.model_checkpoint_path))
@@ -88,7 +95,11 @@ class MLServer(object):
             print('No checkpoint file found')
             return
 
-def main(argv=None):  # pylint: disable=unused-argument
+    def softmax(self, z):
+        return np.exp(z) / np.sum(np.exp(z), axis=1, keepdims=True)
+
+def main(argv=None):
+    np.set_printoptions(edgeitems=128)
     serv = MLServer()
 
     serv.setup()
@@ -103,15 +114,15 @@ def main(argv=None):  # pylint: disable=unused-argument
         entry = input()
         values = np.fromstring(entry, dtype=np.float32, sep=',')
 
-        print("got value: " + np.array_str(values), file=sys.stderr)
+        # print("got value: " + np.array_str(values), file=sys.stderr)
 
         result = serv.inference(values)
 
-        print("calculated: " + str(result), file=sys.stderr)
+        # print("calculated: " + str(result), file=sys.stderr)
 
         print(result)
 
-        print("Wrote Result: ", file=sys.stderr)
+        # print("Wrote Result: ", file=sys.stderr)
 
 def teardown(session, graph):
     session.close()

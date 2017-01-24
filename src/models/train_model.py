@@ -100,7 +100,7 @@ def train():
 
             assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
 
-            if step % 10 == 0:
+            if step % 25 == 0:
                 num_examples_per_step = FLAGS.batch_size
                 examples_per_sec = num_examples_per_step / duration
                 sec_per_batch = float(duration)
@@ -121,30 +121,12 @@ def train():
                 accuracy = tf.reduce_mean(tf.cast(correct_prediction,
                                                   tf.float32))
 
-                lab = labels2
-                tp = tf.reduce_sum(tf.mul(prediction, lab))
-                p = tf.reduce_sum(prediction)
-                l = tf.reduce_sum(lab)
-                precision = tf.div(tp,p)
-                recall = tf.div(tp,l)
-                f1 = tf.mul(2.0, tf.div(tf.mul(precision, recall), tf.add(
-                    precision, recall)))
-
                 train_acc = sess.run(accuracy)
                 tf.scalar_summary('accuracy', accuracy)
 
-                train_prec = sess.run(precision)
-                tf.summary.scalar('precision', precision)
-                train_rec = sess.run(recall)
-                tf.summary.scalar('recall', recall)
-                train_f1 = sess.run(f1)
-                tf.summary.scalar('f1', f1)
-
                 format_str = ('%s: step %d, loss = %.2f, accuracy = %.3f '
-                              'precision = %.3f, recall = %.3f, f1 = %.3f '
                               '(%.1f examples/sec; %.3f sec/batch)')
                 print(format_str % (datetime.now(), step, loss_value, train_acc,
-                                    train_prec, train_rec, train_f1,
                                     examples_per_sec, sec_per_batch))
 
             if step % 25 == 0:
