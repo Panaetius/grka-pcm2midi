@@ -1,7 +1,6 @@
 grka-pcm2midi2
 ==============================
-
-A short description of the project.
+A concolutional neural network on FFTs with Hamming Windows to detect pitch in piano notes (generated from MIDI)
 
 Project Organization
 ------------
